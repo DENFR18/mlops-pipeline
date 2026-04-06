@@ -9,15 +9,7 @@ app = FastAPI(title="Iris Classifier API", version="1.0.0")
 MODEL_PATH = os.getenv("MODEL_PATH", "model/classifier.joblib")
 LABELS = {0: "setosa", 1: "versicolor", 2: "virginica"}
 
-model = None
-
-
-@app.on_event("startup")
-def load_model():
-    global model
-    if not os.path.exists(MODEL_PATH):
-        raise RuntimeError(f"Model not found at {MODEL_PATH}. Run train.py first.")
-    model = joblib.load(MODEL_PATH)
+model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
 
 
 class PredictRequest(BaseModel):
