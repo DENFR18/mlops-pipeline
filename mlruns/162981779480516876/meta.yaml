@@ -1,6 +1,0 @@
-artifact_location: file:///D:/mlops-pipeline/mlruns/162981779480516876
-creation_time: 1775505050623
-experiment_id: '162981779480516876'
-last_update_time: 1775505050623
-lifecycle_stage: active
-name: iris-classifier
