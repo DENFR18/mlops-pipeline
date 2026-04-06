@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from train import train
+from train import train  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -27,7 +27,7 @@ def test_model_predicts():
 
 
 def test_api_health():
-    from predict import app
+    from predict import app  # noqa: E402
     client = TestClient(app)
     response = client.get("/health")
     assert response.status_code == 200
@@ -35,7 +35,7 @@ def test_api_health():
 
 
 def test_api_predict():
-    from predict import app
+    from predict import app  # noqa: E402
     client = TestClient(app)
     payload = {
         "sepal_length": 5.1,
