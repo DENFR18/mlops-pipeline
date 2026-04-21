@@ -9,7 +9,7 @@ app = FastAPI(title="Iris Classifier API", version="1.0.0")
 MODEL_PATH = os.getenv("MODEL_PATH", "model/classifier.joblib")
 LABELS = {0: "setosa", 1: "versicolor", 2: "virginica"}
 
-model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
+model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None  # NOSONAR: path is operator-controlled via env var, not user input
 
 
 class PredictRequest(BaseModel):
