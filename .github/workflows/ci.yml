@@ -7,6 +7,7 @@ on:
     branches: [main]
 
 jobs:
+  # ── Quality Gate ────────────────────────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -28,20 +29,71 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - run: pytest tests/ -v --tb=short
+      - run: pytest tests/ -v --tb=short --cov=src --cov-report=xml
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
       - name: Upload MLflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mlflow-runs
           path: mlruns/
 
+  # ── Security: SAST & Code Quality ──────────────────────────────────────────
+  sonarcloud:
+    name: "Security · SonarCloud"
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history required for blame/new-code analysis
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # ── Security: IaC Misconfiguration Scan ────────────────────────────────────
+  checkov:
+    name: "Security · Checkov (IaC)"
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Checkov (Dockerfile, Compose, Terraform)
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile,docker_compose,terraform
+          # Switch to soft_fail: false once the baseline findings are reviewed
+          soft_fail: true
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+      - name: Upload Checkov SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+
+  # ── Build ───────────────────────────────────────────────────────────────────
   build:
     name: Build Docker Image
     runs-on: ubuntu-latest
     needs: test
     steps:
       - uses: actions/checkout@v4
-      - name: Train model before building image
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Train model
         run: |
           pip install -r requirements.txt
           python src/train.py
@@ -53,3 +105,69 @@ jobs:
           sleep 5
           curl -f http://localhost:8000/health
           docker stop api
+      - name: Export Docker image as tarball
+        run: docker save mlops-pipeline:${{ github.sha }} -o image.tar
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 1
+
+  # ── Security: Container Vulnerability Scan ─────────────────────────────────
+  trivy:
+    name: "Security · Trivy (Docker)"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+      - name: Load Docker image
+        run: docker load -i image.tar
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: mlops-pipeline:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true  # only fail on vulnerabilities that have a fix available
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+  # ── Push to Registry (gated on all security checks) ────────────────────────
+  push:
+    name: Push to GHCR
+    runs-on: ubuntu-latest
+    needs: [trivy, sonarcloud, checkov]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+      - name: Load Docker image
+        run: docker load -i image.tar
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag & push to GHCR
+        run: |
+          docker tag mlops-pipeline:${{ github.sha }} ghcr.io/${{ github.repository }}:${{ github.sha }}
+          docker tag mlops-pipeline:${{ github.sha }} ghcr.io/${{ github.repository }}:latest
+          docker push ghcr.io/${{ github.repository }}:${{ github.sha }}
+          docker push ghcr.io/${{ github.repository }}:latest
