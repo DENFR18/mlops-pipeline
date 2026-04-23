@@ -3,13 +3,25 @@ from pydantic import BaseModel
 import joblib
 import numpy as np
 import os
+from pathlib import Path
 
 app = FastAPI(title="Iris Classifier API", version="1.0.0")
 
-MODEL_PATH = os.getenv("MODEL_PATH", "model/classifier.joblib")
+# joblib.load unpickles arbitrary Python objects, so the model file must come
+# from a trusted location. We pin loading to MODEL_DIR and reject any
+# MODEL_PATH that resolves outside of it (path traversal, symlink escape).
+MODEL_DIR = Path(os.getenv("MODEL_DIR", "model")).resolve()
+_requested = Path(os.getenv("MODEL_PATH", "model/classifier.joblib")).resolve()
+
+if not _requested.is_relative_to(MODEL_DIR):
+    raise RuntimeError(
+        f"MODEL_PATH {_requested} is outside trusted MODEL_DIR {MODEL_DIR}"
+    )
+
+MODEL_PATH = _requested
 LABELS = {0: "setosa", 1: "versicolor", 2: "virginica"}
 
-model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None  # NOSONAR
+model = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
 
 
 class PredictRequest(BaseModel):
