@@ -51,11 +51,14 @@ jobs:
           path: mlruns/
 
   # ── Security: SAST & Code Quality ──────────────────────────────────────────
-  # SonarCloud runs in "report" mode (sonar.qualitygate.wait=false).
-  # The quality gate result shows up on the PR but does not block the pipeline
-  # while we build confidence in the rule set. To skip gracefully on forks or
-  # when SONAR_TOKEN is not configured, each step is guarded on token presence
-  # rather than using continue-on-error (which would mask genuine failures).
+  # SonarCloud runs in "report" mode:
+  #   - sonar.qualitygate.wait=false in sonar-project.properties → we don't
+  #     consume the quality gate result, so it's consistent that the scan
+  #     step itself is tolerated (continue-on-error on the step, not the job).
+  #   - Each step is guarded on SONAR_TOKEN presence so forks and unconfigured
+  #     environments skip cleanly instead of failing with a misleading auth error.
+  # The orchestration (checkout, artifact download) stays strict — only the
+  # third-party scan step is tolerated, so infra issues still surface.
   sonarcloud:
     name: "Security · SonarCloud"
     runs-on: ubuntu-latest
@@ -83,6 +86,7 @@ jobs:
           name: coverage-report
       - if: steps.secret.outputs.present == 'true'
         name: SonarCloud Scan
+        continue-on-error: true  # report-mode: QG is not our blocking gate
         uses: SonarSource/sonarcloud-github-action@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

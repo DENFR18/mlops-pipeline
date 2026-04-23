@@ -18,14 +18,39 @@ Mini pipeline MLOps industrialisé from scratch : entraînement, tracking, servi
 src/train.py       → Entraînement du modèle + logging MLflow
 src/predict.py     → API REST FastAPI pour servir les prédictions
 tests/             → Tests automatisés (model + API)
-.github/workflows/ → Pipeline CI/CD (lint → test → build Docker)
+terraform/         → Infra AWS (ECR + S3 artefacts MLflow)
+.github/workflows/ → Pipeline CI/CD avec gates de sécurité
 ```
 
 ## Pipeline CI/CD
 
 ```
-push → Lint (flake8) → Tests (pytest) → Build Docker image → Health check
+push/PR
+  └─ lint (flake8)
+      └─ test (pytest + couverture)
+          ├─ checkov  ───┐
+          ├─ sonarcloud  ├─> push GHCR (main seulement)
+          └─ build ─ trivy ┘
 ```
+
+- **Principe** : toute PR passe par lint + tests + trois scans de sécurité avant que l'image Docker ne puisse être poussée sur GHCR.
+- **Concurrency group** : un nouveau commit sur une PR annule les runs précédents pour économiser les minutes CI.
+- **Permissions least-privilege** : le workflow démarre en `contents: read` ; chaque job opt-in aux scopes dont il a besoin (`security-events: write` pour l'upload SARIF, `packages: write` pour le push GHCR).
+
+## Sécurité
+
+| Gate | Outil | Mode | Sortie |
+|------|-------|------|--------|
+| Container CVE | Trivy | Report (CRITICAL/HIGH, fixables) | SARIF → onglet Security |
+| IaC misconfig | Checkov | Report (Dockerfile + Terraform) | SARIF → onglet Security |
+| SAST + qualité | SonarCloud | Report (QG n'est pas blocking) | Analyse SonarCloud |
+
+**Politique actuelle** : les trois scans sont en *report mode* le temps de trier la baseline CVE du base image Python. Tous les findings remontent dans l'onglet Security de GitHub via SARIF. Étape suivante : `.trivyignore` + `.checkov.yaml` pour figer les exceptions, puis flipper Trivy/Checkov en `exit-code: 1` / `soft_fail: false`.
+
+**Hardening runtime** :
+- Image Docker tourne sous un utilisateur non-root (`app:app`) avec `HEALTHCHECK`.
+- `predict.py` restreint le chargement du modèle à `MODEL_DIR` via `Path.resolve()` (anti path-traversal / symlink escape), puisque `joblib.load` désérialise du pickle.
+- `apt-get upgrade` dans le Dockerfile pour patcher les CVE OS du base image au moment du build.
 
 ## Lancement local
 
