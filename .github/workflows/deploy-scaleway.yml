@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           SCW_VERSION="2.55.0"
-          curl -fsSL "https://github.com/scaleway/scaleway-cli/releases/download/v${SCW_VERSION}/scw_linux_amd64" \
+          curl -fsSL "https://github.com/scaleway/scaleway-cli/releases/download/v${SCW_VERSION}/scaleway-cli_${SCW_VERSION}_linux_amd64" \
             -o /tmp/scw
           sudo install -m 0755 /tmp/scw /usr/local/bin/scw
           rm /tmp/scw
