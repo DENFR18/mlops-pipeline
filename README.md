@@ -1,98 +1,171 @@
 # MLOps Pipeline
 
-Mini pipeline MLOps industrialisé from scratch : entraînement, tracking, serving et CI/CD.
+End-to-end MLOps lab déployé sur [Scaleway](https://www.scaleway.com) : entraînement, tracking persistant, serving, CI/CD sécurisé, deploy & teardown on-demand.
 
-## Stack
-
-| Composant | Technologie |
-|-----------|-------------|
-| Modèle | Scikit-learn (Random Forest) |
-| Tracking | MLflow |
-| Serving | FastAPI |
-| Containerisation | Docker |
-| CI/CD | GitHub Actions |
+![CI](https://github.com/DENFR18/mlops-pipeline/actions/workflows/ci.yml/badge.svg)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=DENFR18_mlops-pipeline&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=DENFR18_mlops-pipeline)
 
 ## Architecture
 
 ```
-src/train.py       → Entraînement du modèle + logging MLflow
-src/predict.py     → API REST FastAPI pour servir les prédictions
-tests/             → Tests automatisés (model + API)
-.github/workflows/ → Pipeline CI/CD (lint → test → build Docker)
+┌─────────────────┐        ┌─────────────────────────────────────────────┐
+│   GitHub Actions│        │                   Scaleway fr-par           │
+│                 │        │                                             │
+│  lint → test ──┐│        │  ┌──────────────┐     ┌──────────────┐      │
+│                ││        │  │  mlops-api   │     │    mlflow    │      │
+│  Sonar ────────┤│        │  │  (FastAPI)   │     │   tracking   │      │
+│  Trivy ────────┤│──▶ SCR │  │   :8000      │     │    :5000     │      │
+│  Checkov ──────┘│ (image)│  └──────────────┘     └──────┬───────┘      │
+│        │        │        │                              │              │
+│        ▼        │        │                              │ artifacts    │
+│  deploy-scw ────┼──▶ scw │                              ▼              │
+│  destroy-scw ───┼──▶ scw │                   ┌─────────────────────┐   │
+└─────────────────┘        │                   │  Object Storage     │   │
+                           │                   │  (S3-compatible)    │   │
+                           └───────────────────┴─────────────────────┴───┘
+                                                          │
+                                        backend metadata  │
+                                                ▼         │
+                                        ┌─────────────────┴─┐
+                                        │  Neon Postgres    │
+                                        │  (free tier)      │
+                                        └───────────────────┘
 ```
 
-## Pipeline CI/CD
+## Stack
+
+| Couche | Techno |
+|---|---|
+| Modèle | scikit-learn (Random Forest, dataset Iris) |
+| Training & tracking | MLflow 2.14 |
+| Backend metadata MLflow | Neon Postgres |
+| Artifact store | Scaleway Object Storage (S3-compatible) |
+| Serving | FastAPI + Uvicorn |
+| Containerisation | Docker, Docker Compose |
+| Runtime cloud | Scaleway Serverless Containers |
+| Container registry | Scaleway Container Registry + GHCR |
+| IaC | Terraform (AWS targets existants) |
+| CI/CD | GitHub Actions |
+| Qualité & sécu | flake8, pytest, SonarCloud, Trivy, Checkov, SARIF upload |
+
+## Structure
 
 ```
-push → Lint (flake8) → Tests (pytest) → Build Docker image → Health check
+src/
+  train.py          # Entraînement, log params/metrics/model to MLflow
+  predict.py        # API FastAPI (/health, /predict)
+tests/
+  test_model.py     # Tests modèle + API
+mlflow/
+  Dockerfile        # Image du MLflow tracking server
+Dockerfile          # Image de l'API
+docker-compose.yml  # Stack locale (API + MLflow)
+terraform/          # Infra AWS (ECR, S3, KMS)
+.github/workflows/
+  ci.yml                 # Lint, test, build, security scans, push GHCR
+  deploy-scaleway.yml    # Provision registry/bucket + deploy API + MLflow
+  destroy-scaleway.yml   # Teardown on-demand (toggles registry/bucket)
 ```
 
-## Lancement local
+## CI/CD
 
-**1. Installer les dépendances**
-```bash
-pip install -r requirements.txt
-```
+| Job | Rôle |
+|---|---|
+| Lint | `flake8` sur `src/` et `tests/` |
+| Test | `pytest` + coverage XML |
+| Security · SonarCloud | SAST + Quality Gate |
+| Security · Checkov (IaC) | Scan Dockerfile + Terraform, SARIF → GitHub Security |
+| Build Docker Image | Train le modèle puis build + healthcheck |
+| Security · Trivy (Docker) | Scan CVE de l'image, SARIF → GitHub Security |
+| Push to GHCR | Push de l'image vers `ghcr.io/denfr18/mlops-pipeline` (main uniquement, gated par tous les scans) |
 
-**2. Entraîner le modèle**
-```bash
-python src/train.py
-```
+## Déploiement Scaleway
 
-**3. Lancer l'API**
-```bash
-uvicorn src.predict:app --reload
-```
+### Prérequis
 
-**4. Tester l'API**
-```powershell
-Invoke-RestMethod -Method POST -Uri "http://localhost:8000/predict" `
-  -ContentType "application/json" `
-  -Body '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
-```
+GitHub Secrets à configurer dans le repo :
 
-**5. Visualiser les expériences MLflow**
-```bash
-mlflow ui
-# → http://127.0.0.1:5000
-```
+| Secret | Source |
+|---|---|
+| `SCW_ACCESS_KEY` | Scaleway IAM API key |
+| `SCW_SECRET_KEY` | Idem (visible une seule fois à la création) |
+| `SCW_DEFAULT_ORGANIZATION_ID` | Settings organisation Scaleway |
+| `SCW_DEFAULT_PROJECT_ID` | Settings du projet Scaleway |
+| `NEON_DATABASE_URL` | Connection string [Neon](https://neon.tech) (`postgresql://...?sslmode=require`) |
+| `SONAR_TOKEN` | Token SonarCloud (si scan activé) |
 
-**6. Lancer avec Docker**
-```bash
-docker compose up --build
-```
+### Deploy
+
+Onglet **Actions** → **Deploy to Scaleway** → *Run workflow*.
+
+Le workflow :
+1. Installe le CLI Scaleway
+2. Crée (ou réutilise) le bucket Object Storage pour les artifacts MLflow
+3. Crée (ou réutilise) les namespaces Registry + Serverless Containers
+4. Build & push l'image MLflow, deploy le container `mlflow` avec `NEON_DATABASE_URL` et credentials S3 en secret env vars
+5. Attend que MLflow soit `ready` et récupère son URL publique
+6. Entraîne le modèle avec `MLFLOW_TRACKING_URI` pointant sur le MLflow déployé → runs trackés dans Neon + artifacts dans S3
+7. Build & push l'image API avec le modèle baké dedans
+8. Deploy le container `mlops-api`
+9. Écrit les 2 URLs (API + MLflow) dans le summary du run
+
+### Destroy
+
+Onglet **Actions** → **Destroy Scaleway deployment** → *Run workflow*.
+
+Options :
+- `delete_registry` : supprimer aussi le Container Registry (sinon gardé pour les futurs déploiements)
+- `delete_bucket` : supprimer le bucket MLflow (⚠️ perd tous les artifacts)
+
+Par défaut, les 2 sont à `false` → seuls les containers serverless sont détruits. Free tier respecté.
 
 ## Endpoints API
 
 | Méthode | Route | Description |
-|---------|-------|-------------|
-| GET | `/health` | Statut de l'API |
-| POST | `/predict` | Prédiction à partir de 4 features |
+|---|---|---|
+| GET | `/health` | Statut + présence du modèle en mémoire |
+| POST | `/predict` | Inférence à partir des 4 features Iris |
+| GET | `/docs` | Swagger UI (généré par FastAPI) |
 
-### Exemple de requête
+### Exemple
 
-```json
-{
-  "sepal_length": 5.1,
-  "sepal_width": 3.5,
-  "petal_length": 1.4,
-  "petal_width": 0.2
-}
+```bash
+curl -X POST https://<api-url>/predict \
+  -H "Content-Type: application/json" \
+  -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}'
 ```
 
-### Exemple de réponse
-
+Réponse :
 ```json
-{
-  "prediction": 0,
-  "label": "setosa",
-  "probabilities": [1.0, 0.0, 0.0]
-}
+{"prediction": 0, "label": "setosa", "probabilities": [1.0, 0.0, 0.0]}
 ```
 
-## Résultats
+## Lancement local
 
-| Métrique | Score |
-|----------|-------|
-| Accuracy | 1.00 |
-| F1-score | 1.00 |
+```bash
+# Install & train
+pip install -r requirements.txt
+python src/train.py
+
+# Stack complète (API + MLflow)
+docker compose up --build
+# API     → http://localhost:8000
+# Swagger → http://localhost:8000/docs
+# MLflow  → http://localhost:5001
+```
+
+## Tests
+
+```bash
+pytest tests/ -v --cov=src
+```
+
+## Limites assumées
+
+Ce projet est un **lab pédagogique** centré sur la chaîne MLOps, pas sur le modèle :
+- Dataset Iris (toy), pas représentatif d'un cas d'usage réel
+- Pas d'orchestrateur (Airflow / Prefect) — étape suivante prévue pour piloter ingestion → training → évaluation → promotion
+- Pas de détection de drift / réentraînement automatique — à ajouter via Evidently AI ou équivalent
+- Pas de feature store, pas d'A/B testing de modèles
+
+L'accent est mis sur **l'industrialisation** : CI/CD sécurisé, déploiement cloud reproductible, tracking MLflow persistant, IaC.
