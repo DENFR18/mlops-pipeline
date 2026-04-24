@@ -11,6 +11,14 @@ on:
         options:
           - "false"
           - "true"
+      delete_bucket:
+        description: "Also delete the MLflow artifact bucket (loses all experiments)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 env:
   SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY }}
@@ -21,6 +29,7 @@ env:
   SCW_DEFAULT_ZONE: fr-par-1
   REGISTRY_NAMESPACE: mlops-pipeline
   CONTAINER_NAMESPACE: mlops-pipeline
+  S3_ENDPOINT: https://s3.fr-par.scw.cloud
 
 jobs:
   destroy:
@@ -62,6 +71,23 @@ jobs:
             echo "No registry namespace '$REGISTRY_NAMESPACE' found."
           fi
 
+      - name: Delete MLflow artifact bucket (optional)
+        if: inputs.delete_bucket == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_KEY }}
+          AWS_DEFAULT_REGION: fr-par
+        run: |
+          set -euo pipefail
+          BUCKET="mlops-pipeline-mlflow-${SCW_DEFAULT_PROJECT_ID:0:8}"
+          if aws --endpoint-url "$S3_ENDPOINT" s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "Emptying and deleting bucket $BUCKET..."
+            aws --endpoint-url "$S3_ENDPOINT" s3 rm "s3://$BUCKET" --recursive
+            aws --endpoint-url "$S3_ENDPOINT" s3 rb "s3://$BUCKET"
+          else
+            echo "No bucket $BUCKET found."
+          fi
+
       - name: Summary
         run: |
           {
@@ -69,4 +95,5 @@ jobs:
             echo ""
             echo "- Containers namespace: deleted (if it existed)"
             echo "- Registry namespace: ${{ inputs.delete_registry == 'true' && 'deleted' || 'kept' }}"
+            echo "- MLflow bucket: ${{ inputs.delete_bucket == 'true' && 'deleted' || 'kept' }}"
           } >> "$GITHUB_STEP_SUMMARY"
