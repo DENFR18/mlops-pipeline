@@ -9,6 +9,10 @@ RUN pip install --no-cache-dir \
     psycopg2-binary==2.9.9 \
     boto3==1.34.131
 
+RUN groupadd --system mlflow && useradd --system --gid mlflow --home /home/mlflow --create-home mlflow
+USER mlflow
+WORKDIR /home/mlflow
+
 EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
