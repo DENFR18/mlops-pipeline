@@ -30,12 +30,11 @@ jobs:
       - name: Install Scaleway CLI
         run: |
           set -euo pipefail
-          SCW_VERSION="2.34.0"
-          curl -fsSL "https://github.com/scaleway/scaleway-cli/releases/download/v${SCW_VERSION}/scaleway-cli_${SCW_VERSION}_linux_amd64.tar.gz" \
-            -o /tmp/scw.tar.gz
-          tar -xzf /tmp/scw.tar.gz -C /tmp
+          SCW_VERSION="2.55.0"
+          curl -fsSL "https://github.com/scaleway/scaleway-cli/releases/download/v${SCW_VERSION}/scw_linux_amd64" \
+            -o /tmp/scw
           sudo install -m 0755 /tmp/scw /usr/local/bin/scw
-          rm /tmp/scw.tar.gz /tmp/scw
+          rm /tmp/scw
           scw version
 
       - name: Delete Serverless Containers namespace (cascades containers)
