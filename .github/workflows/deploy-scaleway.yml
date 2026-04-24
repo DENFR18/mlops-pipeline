@@ -129,6 +129,12 @@ jobs:
             sleep 5
           done
           URL=$(scw container container get "$CT_ID" -o json | jq -r '.domain_name')
+          echo ""
+          echo "========================================"
+          echo "  Deployed: https://$URL"
+          echo "  Health:   https://$URL/health"
+          echo "========================================"
+          echo ""
           {
             echo "### Scaleway deployment"
             echo ""
